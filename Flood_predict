@@ -1,0 +1,591 @@
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Random; // For random weight initialization
+
+public class Shallow {
+    private int[] layer;
+    private double learningRate;
+    private double momentum;
+    private String activative;
+
+    // Weights for each layer connection (list of matrices)
+    private double[][][] weights;
+    // Delta weights for momentum (list of matrices)
+    private double[][][] deltaWeights;
+    // Biases for each layer (list of arrays)
+    private double[][] biases;
+    // Delta biases for momentum (list of arrays)
+    private double[][] deltaBiases;
+    // Gradients for backpropagation (list of arrays)
+    private double[][] gradients;
+
+    // Activations (outputs) of each layer during feedforward
+    private List<double[]> h;
+
+    private Random random; // For random initialization
+
+    public Shallow(int[] layer, double learningRate, double momentum, String activative) {
+        this.layer = layer;
+        this.learningRate = learningRate;
+        this.momentum = momentum;
+        this.activative = activative;
+        this.random = new Random(); // Initialize random number generator
+
+        initInform(layer);
+    }
+
+    // --- Activation Functions ---
+    private double activate(double x) {
+        switch (activative) {
+            case "sigmoid":
+                return 1.0 / (1.0 + Math.exp(-x));
+            case "relu":
+                return Math.max(0, x);
+            case "tanh":
+                return Math.tanh(x);
+            case "linear":
+                return x;
+            default:
+                throw new IllegalArgumentException("Unknown activation function: " + activative);
+        }
+    }
+
+    // Derivative of Activation Functions
+    private double activateDiff(double x_activated) { // x_activated is the output of the activation function
+        switch (activative) {
+            case "sigmoid":
+                return x_activated * (1.0 - x_activated);
+            case "relu":
+                return x_activated > 0 ? 1.0 : 0.0;
+            case "tanh":
+                return 1.0 - (x_activated * x_activated);
+            case "linear":
+                return 1.0;
+            default:
+                throw new IllegalArgumentException("Unknown activation function: " + activative);
+        }
+    }
+
+    // --- Initialization ---
+    private void initInform(int[] layer) {
+        weights = new double[layer.length - 1][][];
+        deltaWeights = new double[layer.length - 1][][];
+        biases = new double[layer.length - 1][];
+        deltaBiases = new double[layer.length - 1][];
+        gradients = new double[layer.length][];
+
+        gradients[0] = new double[layer[0]]; // Input layer gradient (not used for updates but for consistency)
+
+        for (int i = 0; i < layer.length - 1; i++) {
+            // Weights matrix (rows = next layer neurons, cols = current layer neurons)
+            weights[i] = new double[layer[i + 1]][layer[i]];
+            deltaWeights[i] = new double[layer[i + 1]][layer[i]]; // Same size as weights
+
+            // Biases array (size = next layer neurons)
+            biases[i] = new double[layer[i + 1]];
+            deltaBiases[i] = new double[layer[i + 1]]; // Same size as biases
+
+            gradients[i + 1] = new double[layer[i + 1]]; // Gradient for the current hidden/output layer
+
+            // Initialize weights and biases randomly
+            for (int r = 0; r < layer[i + 1]; r++) {
+                for (int c = 0; c < layer[i]; c++) {
+                    weights[i][r][c] = random.nextDouble() * 2.0 - 0.5; // Random between -0.5 and 0.5
+                }
+                biases[i][r] = random.nextDouble() * 2.0 - 1.0; // Random between -1 and 1
+            }
+        }
+    }
+
+    // --- Feedforward ---
+    public void feedForward(double[] input) {
+        h = new ArrayList<>();
+        h.add(input); // Add input layer activations
+
+        for (int i = 0; i < layer.length - 1; i++) {
+            double[] currentLayerInput = h.get(i);
+            double[][] currentWeights = weights[i];
+            double[] currentBiases = biases[i];
+
+            double[] nextLayerOutput = new double[layer[i + 1]];
+
+            // Matrix multiplication: currentWeights @ currentLayerInput
+            for (int r = 0; r < currentWeights.length; r++) { // Iterate through rows of weights (neurons in next layer)
+                double sum = 0;
+                for (int c = 0; c < currentWeights[r].length; c++) { // Iterate through columns of weights (neurons in current layer)
+                    sum += currentWeights[r][c] * currentLayerInput[c];
+                }
+                nextLayerOutput[r] = activate(sum + currentBiases[r]);
+            }
+            h.add(nextLayerOutput); // Add activated output of the current layer
+        }
+    }
+
+    // --- Backpropagation ---
+    public double backPropagation(double[] designOutput) {
+        double currentErrorSum = 0; // For loss calculation
+
+        // Calculate output layer error and gradient
+        double[] outputLayerActivation = h.get(layer.length - 1);
+        double[] error = new double[outputLayerActivation.length];
+
+        for (int i = 0; i < outputLayerActivation.length; i++) {
+            error[i] = designOutput[i] - outputLayerActivation[i];
+            currentErrorSum += 0.5 * error[i] * error[i]; // Squared error
+            gradients[layer.length - 1][i] = error[i] * activateDiff(outputLayerActivation[i]);
+        }
+
+        // Backpropagate through hidden layers
+        for (int j = layer.length - 2; j >= 0; j--) { // Iterate from last hidden layer back to input layer
+            double[] currentLayerActivation = h.get(j + 1); // Output of the current layer being updated
+            double[] previousLayerActivation = h.get(j);    // Output of the previous layer (input to current)
+
+            // Calculate gradient for current layer
+            if (j < layer.length - 2) { // If not the output layer (already handled)
+                double[][] nextWeights = weights[j + 1]; // Weights connecting this layer to the next
+                double[] nextLayerGradient = gradients[j + 2]; // Gradient from the layer ahead
+
+                for (int k = 0; k < layer[j + 1]; k++) { // Iterate through neurons in the current layer (j+1)
+                    double sumWeightedGradient = 0;
+                    for (int n = 0; n < nextWeights.length; n++) { // Iterate through neurons in the next layer
+                        sumWeightedGradient += nextWeights[n][k] * nextLayerGradient[n];
+                    }
+                    gradients[j + 1][k] = activateDiff(currentLayerActivation[k]) * sumWeightedGradient;
+                }
+            }
+
+            // Update weights and biases for connection from layer j to j+1
+            double[][] currentWeights = weights[j];
+            double[][] currentDeltaWeights = deltaWeights[j];
+            double[] currentBiases = biases[j];
+            double[] currentDeltaBiases = deltaBiases[j];
+            double[] currentGradient = gradients[j + 1];
+
+            // Update delta weights and weights
+            for (int r = 0; r < currentWeights.length; r++) { // Neurons in current layer (j+1)
+                for (int c = 0; c < currentWeights[r].length; c++) { // Neurons in previous layer (j)
+                    // np.outer equivalent for weight update
+                    currentDeltaWeights[r][c] = (momentum * currentDeltaWeights[r][c]) +
+                                                 (learningRate * currentGradient[r] * previousLayerActivation[c]);
+                    currentWeights[r][c] += currentDeltaWeights[r][c];
+                }
+            }
+
+            // Update delta biases and biases
+            for (int r = 0; r < currentBiases.length; r++) {
+                currentDeltaBiases[r] = (momentum * currentDeltaBiases[r]) + (learningRate * currentGradient[r]);
+                currentBiases[r] += currentDeltaBiases[r];
+            }
+        }
+        return currentErrorSum;
+    }
+
+    // --- Training ---
+    public void train(double[][] inputs, double[][] designOutputs, int epochs) {
+        List<Double> lossPredict = new ArrayList<>();
+
+        for (int epoch = 0; epoch < epochs; epoch++) {
+            double epochLoss = 0;
+            // Shuffle data for each epoch (optional, but good practice for SGD)
+            List<int[]> dataPairs = new ArrayList<>();
+            for(int i = 0; i < inputs.length; i++) {
+                dataPairs.add(new int[]{i}); // Store original indices
+            }
+            Collections.shuffle(dataPairs, random); // Shuffle indices
+
+            for (int[] pair : dataPairs) {
+                int i = pair[0];
+                feedForward(inputs[i]);
+                epochLoss += backPropagation(designOutputs[i]);
+            }
+            epochLoss /= inputs.length;
+            lossPredict.add(epochLoss);
+
+            if ((epoch + 1) % 10 == 0) {
+                System.out.printf("Epoch = %d | AV_Error = %.6f%n", (epoch + 1), epochLoss);
+            }
+        }
+
+        // In Java, plotting requires a graphics library like JFreeChart or JavaFX.
+        // As per "no library" constraint, plotting code is omitted here.
+        // You would integrate a charting library if visualization is needed.
+        System.out.println("Training complete. Loss trend (first 10, last 10):");
+        for(int i = 0; i < Math.min(10, lossPredict.size()); i++) {
+            System.out.printf("%.4f ", lossPredict.get(i));
+        }
+        System.out.println("...");
+        for(int i = Math.max(0, lossPredict.size() - 10); i < lossPredict.size(); i++) {
+            System.out.printf("%.4f ", lossPredict.get(i));
+        }
+        System.out.println();
+    }
+
+    // --- Testing ---
+    public void test(double[][] inputs, double[][] designOutputs, String type) {
+        List<double[]> actualOutputs = new ArrayList<>();
+        for (double[] input : inputs) {
+            feedForward(input);
+            actualOutputs.add(h.get(h.size() - 1));
+        }
+
+        if (type.equals("classification")) {
+            int[] predictedLabels = new int[actualOutputs.size()];
+            int[] trueLabels = new int[designOutputs.length];
+
+            for (int i = 0; i < actualOutputs.size(); i++) {
+                // For binary classification (2 output neurons, e.g., one-hot encoded)
+                // Assuming output[0] vs output[1] for binary
+                if (actualOutputs.get(i).length == 2) {
+                    predictedLabels[i] = (actualOutputs.get(i)[0] > actualOutputs.get(i)[1]) ? 0 : 1;
+                } else if (actualOutputs.get(i).length == 1) { // Single output neuron for binary (e.g., sigmoid > 0.5)
+                     predictedLabels[i] = (actualOutputs.get(i)[0] > 0.5) ? 1 : 0;
+                } else { // Multi-class classification (find max)
+                    int maxIndex = 0;
+                    for (int j = 1; j < actualOutputs.get(i).length; j++) {
+                        if (actualOutputs.get(i)[j] > actualOutputs.get(i)[maxIndex]) {
+                            maxIndex = j;
+                        }
+                    }
+                    predictedLabels[i] = maxIndex;
+                }
+                
+                // Convert design output to single label
+                if (designOutputs[i].length == 2) {
+                    trueLabels[i] = (designOutputs[i][0] > designOutputs[i][1]) ? 0 : 1;
+                } else if (designOutputs[i].length == 1) {
+                    trueLabels[i] = (int)Math.round(designOutputs[i][0]); // Assuming 0 or 1
+                } else {
+                     int maxIndex = 0;
+                    for (int j = 1; j < designOutputs[i].length; j++) {
+                        if (designOutputs[i][j] > designOutputs[i][maxIndex]) {
+                            maxIndex = j;
+                        }
+                    }
+                    trueLabels[i] = maxIndex;
+                }
+            }
+
+            int correctPredictions = 0;
+            for (int i = 0; i < predictedLabels.length; i++) {
+                if (predictedLabels[i] == trueLabels[i]) {
+                    correctPredictions++;
+                }
+            }
+            double accuracy = (double) correctPredictions * 100.0 / predictedLabels.length;
+            System.out.printf("Accuracy = %.2f%%%n", accuracy);
+
+            // Confusion matrix computation
+            // Determine max class label for confusion matrix size
+            int numClasses = 0;
+            for (int label : trueLabels) numClasses = Math.max(numClasses, label);
+            for (int label : predictedLabels) numClasses = Math.max(numClasses, label);
+            numClasses++; // 0-indexed to count of classes
+
+            int[][] cm = computeConfusionMatrix(trueLabels, predictedLabels, numClasses);
+            System.out.println("Confusion Matrix:");
+            for (int[] row : cm) {
+                System.out.println(Arrays.toString(row));
+            }
+            // Plotting confusion matrix also requires a graphics library
+        } else { // Regression
+            double mse = 0;
+            for (int i = 0; i < actualOutputs.size(); i++) {
+                double[] actual = actualOutputs.get(i);
+                double[] design = designOutputs[i];
+                double sumSqDiff = 0;
+                for (int j = 0; j < actual.length; j++) {
+                    double diff = actual[j] - design[j];
+                    sumSqDiff += diff * diff;
+                }
+                mse += sumSqDiff / 2.0; // Sum of squared errors / 2
+            }
+            mse /= actualOutputs.size();
+            System.out.printf("Mean Squared Error = %.6f%n", mse);
+        }
+    }
+
+    // --- Utility Methods (Moved from global scope into main class or separate static class if desired) ---
+
+    // Compute confusion matrix
+    private int[][] computeConfusionMatrix(int[] yTrue, int[] yPred, int numClasses) {
+        int[][] cm = new int[numClasses][numClasses];
+        for (int i = 0; i < yTrue.length; i++) {
+            cm[yTrue[i]][yPred[i]]++;
+        }
+        return cm;
+    }
+    
+    // --- Data Reading and Splitting (Can be in a separate class or static methods) ---
+    public static class DataLoader {
+
+        public static Data readfile(String filenameKey, String filepathFlood, String filepathCross) {
+            if (filenameKey.equals("flood")) {
+                return readfile1(filepathFlood);
+            } else if (filenameKey.equals("cross")) {
+                return readfile2(filepathCross);
+            } else {
+                System.err.println("Error: Unknown file key");
+                return new Data(new double[][]{}, new double[][]{}); // Return empty data
+            }
+        }
+
+        // Returns a simple wrapper class for input and output data
+        public static class Data {
+            public double[][] inputs;
+            public double[][] outputs;
+
+            public Data(double[][] inputs, double[][] outputs) {
+                this.inputs = inputs;
+                this.outputs = outputs;
+            }
+        }
+
+        private static Data readfile1(String filename) {
+            List<double[]> allDataList = new ArrayList<>();
+            try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
+                // Skip header lines
+                br.readLine(); // Skip line 1
+                br.readLine(); // Skip line 2
+
+                String line;
+                while ((line = br.readLine()) != null) {
+                    String[] elements = line.split("\\s+"); // Split by one or more spaces
+                    double[] row = new double[elements.length];
+                    for (int i = 0; i < elements.length; i++) {
+                        row[i] = Double.parseDouble(elements[i].trim());
+                    }
+                    allDataList.add(row);
+                }
+            } catch (IOException | NumberFormatException e) {
+                System.err.println("Error reading Flood dataset file: " + e.getMessage());
+                return new Data(new double[][]{}, new double[][]{});
+            }
+
+            if (allDataList.isEmpty()) {
+                return new Data(new double[][]{}, new double[][]{});
+            }
+
+            // Convert List<double[]> to double[][]
+            double[][] allData = allDataList.toArray(new double[0][]);
+
+            // Shuffle data (manual shuffle)
+            Random rand = new Random();
+            for (int i = allData.length - 1; i > 0; i--) {
+                int j = rand.nextInt(i + 1);
+                double[] temp = allData[i];
+                allData[i] = allData[j];
+                allData[j] = temp;
+            }
+
+            // Normalize data (min-max scaling)
+            double[] minVals = new double[allData[0].length];
+            double[] maxVals = new double[allData[0].length];
+            Arrays.fill(minVals, Double.MAX_VALUE);
+            Arrays.fill(maxVals, Double.MIN_VALUE);
+
+            for (double[] row : allData) {
+                for (int i = 0; i < row.length; i++) {
+                    minVals[i] = Math.min(minVals[i], row[i]);
+                    maxVals[i] = Math.max(maxVals[i], row[i]);
+                }
+            }
+
+            for (int r = 0; r < allData.length; r++) {
+                for (int c = 0; c < allData[r].length; c++) {
+                    double range = maxVals[c] - minVals[c];
+                    if (range == 0) { // Avoid division by zero if all values are the same
+                        allData[r][c] = 0; // Or 0.5, depending on desired behavior
+                    } else {
+                        allData[r][c] = (allData[r][c] - minVals[c]) / range;
+                    }
+                }
+            }
+
+            double[][] inputs = new double[allData.length][allData[0].length - 1];
+            double[][] outputs = new double[allData.length][1]; // Single output for Flood dataset
+
+            for (int i = 0; i < allData.length; i++) {
+                System.arraycopy(allData[i], 0, inputs[i], 0, allData[0].length - 1);
+                outputs[i][0] = allData[i][allData[0].length - 1];
+            }
+            return new Data(inputs, outputs);
+        }
+
+        private static Data readfile2(String filename) {
+            List<double[]> allDataList = new ArrayList<>();
+            try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
+                String line;
+                List<String> lines = new ArrayList<>();
+                while ((line = br.readLine()) != null) {
+                    lines.add(line);
+                }
+
+                // Parse according to the specific 'cross.txt' format (every 3 lines)
+                for (int i = 1; i < lines.size(); i += 3) {
+                    if (i + 1 < lines.size()) { // Ensure there are two more lines
+                        String[] z_str = lines.get(i).trim().split("\\s+");
+                        String[] zz_str = lines.get(i + 1).trim().split("\\s+");
+
+                        double[] z = new double[z_str.length];
+                        for (int k = 0; k < z_str.length; k++) {
+                            z[k] = Double.parseDouble(z_str[k]);
+                        }
+
+                        double[] zz = new double[zz_str.length];
+                        for (int k = 0; k < zz_str.length; k++) {
+                            zz[k] = Double.parseDouble(zz_str[k]);
+                        }
+
+                        // Append zz to z
+                        double[] combined = new double[z.length + zz.length];
+                        System.arraycopy(z, 0, combined, 0, z.length);
+                        System.arraycopy(zz, 0, combined, z.length, zz.length);
+                        allDataList.add(combined);
+                    }
+                }
+            } catch (IOException | NumberFormatException e) {
+                System.err.println("Error reading Cross dataset file: " + e.getMessage());
+                return new Data(new double[][]{}, new double[][]{});
+            }
+            
+            if (allDataList.isEmpty()) {
+                return new Data(new double[][]{}, new double[][]{});
+            }
+
+            double[][] allData = allDataList.toArray(new double[0][]);
+
+            // Shuffle data (manual shuffle)
+            Random rand = new Random();
+            for (int i = allData.length - 1; i > 0; i--) {
+                int j = rand.nextInt(i + 1);
+                double[] temp = allData[i];
+                allData[i] = allData[j];
+                allData[j] = temp;
+            }
+
+            double[][] inputs = new double[allData.length][allData[0].length - 2];
+            double[][] outputs = new double[allData.length][2]; // Two outputs for Cross dataset
+
+            for (int i = 0; i < allData.length; i++) {
+                System.arraycopy(allData[i], 0, inputs[i], 0, allData[0].length - 2);
+                outputs[i][0] = allData[i][allData[0].length - 2];
+                outputs[i][1] = allData[i][allData[0].length - 1];
+            }
+            return new Data(inputs, outputs);
+        }
+
+        public static DataSplit splitData(double[][] inputData, double[][] outputData, double valRatio) {
+            if (inputData.length == 0) {
+                return new DataSplit(new double[][]{}, new double[][]{}, new double[][]{}, new double[][]{});
+            }
+
+            int numSamples = inputData.length;
+            Integer[] indices = new Integer[numSamples];
+            for (int i = 0; i < numSamples; i++) {
+                indices[i] = i;
+            }
+            Collections.shuffle(Arrays.asList(indices), new Random());
+
+            int splitPoint = (int) ((1.0 - valRatio) * numSamples);
+
+            double[][] xTrain = new double[splitPoint][];
+            double[][] yTrain = new double[splitPoint][];
+            double[][] xVal = new double[numSamples - splitPoint][];
+            double[][] yVal = new double[numSamples - splitPoint][];
+
+            for (int i = 0; i < splitPoint; i++) {
+                xTrain[i] = inputData[indices[i]];
+                yTrain[i] = outputData[indices[i]];
+            }
+
+            for (int i = splitPoint; i < numSamples; i++) {
+                xVal[i - splitPoint] = inputData[indices[i]];
+                yVal[i - splitPoint] = outputData[indices[i]];
+            }
+            return new DataSplit(xTrain, yTrain, xVal, yVal);
+        }
+
+        public static class DataSplit {
+            public double[][] X_train;
+            public double[][] Y_train;
+            public double[][] X_val;
+            public double[][] Y_val;
+
+            public DataSplit(double[][] X_train, double[][] Y_train, double[][] X_val, double[][] Y_val) {
+                this.X_train = X_train;
+                this.Y_train = Y_train;
+                this.X_val = X_val;
+                this.Y_val = Y_val;
+            }
+        }
+    }
+
+    public static void main(String[] args) {
+        // Flood dataset example
+        // Ensure Flood_dataset.txt is in the 'src' directory or provide the full path
+        DataLoader.Data floodData = DataLoader.readfile("flood","C:/Users/MSI-1/Downloads/Flood_dataset.txt", null); 
+        if (floodData.inputs.length > 0) {
+            DataLoader.DataSplit floodSplit = DataLoader.splitData(floodData.inputs, floodData.outputs, 0.2);
+            Shallow nn = new Shallow(new int[]{8, 32, 1}, 0.05, 0.9, "sigmoid");
+            nn.train(floodSplit.X_train, floodSplit.Y_train, 1000);
+            nn.test(floodSplit.X_train, floodSplit.Y_train, "regression"); // Flood dataset is likely regression
+        } else {
+            System.out.println("Skipping Flood dataset due to data loading error.");
+        }
+
+        System.out.println("\n-----------------------------------\n");
+
+        // Cross dataset example
+        // Ensure cross.txt is in the 'src' directory or provide the full path
+        DataLoader.Data crossData = DataLoader.readfile("cross", null, "C:/Users/MSI-1/Downloads/cross.txt");
+        if (crossData.inputs.length > 0) {
+            DataLoader.DataSplit crossSplit = DataLoader.splitData(crossData.inputs, crossData.outputs, 0.1);
+            Shallow nn1 = new Shallow(new int[]{2, 32, 2}, 0.5, 0.9, "sigmoid");
+            nn1.train(crossSplit.X_train, crossSplit.Y_train, 1000);
+            nn1.test(crossSplit.X_train, crossSplit.Y_train, "classification"); // Cross dataset is classification
+
+            Shallow nn2 = new Shallow(nn1.layer, nn1.learningRate, nn1.momentum, nn1.activative);
+            // Manually copy weights and biases for deep copy equivalent
+            nn2.weights = deepCopy3DArray(nn1.weights);
+            nn2.deltaWeights = deepCopy3DArray(nn1.deltaWeights);
+            nn2.biases = deepCopy2DArray(nn1.biases);
+            nn2.deltaBiases = deepCopy2DArray(nn1.deltaBiases);
+            // Gradients can be reinitialized or copied if needed, but usually not for test
+            nn2.gradients = new double[nn1.gradients.length][];
+            for(int i = 0; i < nn1.gradients.length; i++) {
+                nn2.gradients[i] = new double[nn1.gradients[i].length];
+            }
+
+
+            // As noted in Python, training on validation data is unusual.
+            // This is kept for direct translation, but consider its implications.
+            nn2.train(crossSplit.X_val, crossSplit.Y_val, 1000);
+            nn2.test(crossSplit.X_val, crossSplit.Y_val, "classification");
+        } else {
+            System.out.println("Skipping Cross dataset due to data loading error.");
+        }
+    }
+
+    // Helper for deep copying 3D arrays (weights)
+    private static double[][][] deepCopy3DArray(double[][][] original) {
+        double[][][] copy = new double[original.length][][];
+        for (int i = 0; i < original.length; i++) {
+            copy[i] = deepCopy2DArray(original[i]);
+        }
+        return copy;
+    }
+
+    // Helper for deep copying 2D arrays (biases, delta weights, delta biases)
+    private static double[][] deepCopy2DArray(double[][] original) {
+        double[][] copy = new double[original.length][];
+        for (int i = 0; i < original.length; i++) {
+            copy[i] = Arrays.copyOf(original[i], original[i].length);
+        }
+        return copy;
+    }
+}
